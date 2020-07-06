@@ -5,13 +5,14 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
-	"github.com/pkg/errors"
-	"golang.org/x/net/proxy"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/pkg/errors"
+	"golang.org/x/net/proxy"
 )
 
 type Dialer interface {

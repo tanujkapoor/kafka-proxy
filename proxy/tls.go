@@ -6,12 +6,15 @@ import (
 	"encoding/pem"
 	"io/ioutil"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/grepplabs/kafka-proxy/config"
 	"github.com/klauspost/cpuid"
 	"github.com/pkg/errors"
+	"golang.org/x/crypto/pkcs12"
 )
 
 var (
@@ -166,11 +169,15 @@ func getCurvePreferences(enabledCurvePreferences []string) ([]tls.CurveID, error
 	return curvePreferences, nil
 }
 
-func newTLSClientConfig(conf *config.Config) (*tls.Config, error) {
+func newTLSClientConfigsMap(conf *config.Config) (map[string]*tls.Config, error) {
 	// https://blog.cloudflare.com/exposing-go-on-the-internet/
 	opts := conf.Kafka.TLS
 
+	var tlsConfigsMap = make(map[string]*tls.Config, 0)
+
 	cfg := &tls.Config{InsecureSkipVerify: opts.InsecureSkipVerify}
+
+	subject := ""
 
 	if opts.ClientCertFile != "" && opts.ClientKeyFile != "" {
 		certPEMBlock, err := ioutil.ReadFile(opts.ClientCertFile)
@@ -190,6 +197,47 @@ func newTLSClientConfig(conf *config.Config) (*tls.Config, error) {
 			return nil, err
 		}
 		cfg.Certificates = []tls.Certificate{cert}
+		cpb, _ := pem.Decode(certPEMBlock)
+		certX509, err := x509.ParseCertificate(cpb.Bytes)
+		if err != nil {
+			return nil, err
+		}
+		subject = certX509.Subject.String()
+	}
+
+	tlsConfigsMap[subject] = cfg
+
+	if opts.ClientP12Directory != "" {
+		p12FilePaths, err := findFiles(opts.ClientP12Directory, "*.p12")
+		if err != nil {
+			return nil, err
+		}
+		for _, p12FilePath := range p12FilePaths {
+			cfg := &tls.Config{InsecureSkipVerify: opts.InsecureSkipVerify}
+			p12Data, err := ioutil.ReadFile(p12FilePath)
+			if err != nil {
+				return nil, err
+			}
+			blocks, err := pkcs12.ToPEM(p12Data, opts.ClientP12Password)
+			if err != nil {
+				return nil, err
+			}
+
+			var pemData []byte
+			for _, b := range blocks {
+				pemData = append(pemData, pem.EncodeToMemory(b)...)
+			}
+			x509KeyPair, err := tls.X509KeyPair(pemData, pemData)
+			if err != nil {
+				return nil, err
+			}
+			cfg.Certificates = []tls.Certificate{x509KeyPair}
+			certX509, err := x509.ParseCertificate(x509KeyPair.Certificate[0])
+			if err != nil {
+				return nil, err
+			}
+			tlsConfigsMap[certX509.Subject.String()] = cfg
+		}
 	}
 
 	if opts.CAChainCertFile != "" {
@@ -201,10 +249,12 @@ func newTLSClientConfig(conf *config.Config) (*tls.Config, error) {
 		if ok := rootCAs.AppendCertsFromPEM(caCertPEMBlock); !ok {
 			return nil, errors.New("Failed to parse client root certificate")
 		}
-
-		cfg.RootCAs = rootCAs
+		for _, cfg := range tlsConfigsMap {
+			cfg.RootCAs = rootCAs
+		}
 	}
-	return cfg, nil
+
+	return tlsConfigsMap, nil
 }
 
 func decryptPEM(pemData []byte, password string) ([]byte, error) {
@@ -304,4 +354,26 @@ func validateClientCert(actualClientCert *x509.Certificate, expectedCert *x509.C
 		return errors.New("Client cert sent by proxy client does not match brokers client cert (tls-client-cert-file)")
 	}
 	return nil
+}
+
+func findFiles(root, pattern string) ([]string, error) {
+	var matches []string
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		if matched, err := filepath.Match(pattern, filepath.Base(path)); err != nil {
+			return err
+		} else if matched {
+			matches = append(matches, path)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return matches, nil
 }

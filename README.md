@@ -135,6 +135,8 @@ See:
           --tls-client-cert-file string                    PEM encoded file with client certificate
           --tls-client-key-file string                     PEM encoded file with private key for the client certificate
           --tls-client-key-password string                 Password to decrypt rsa private key
+          --tls-client-p12-directory                       Directory with client p12 files
+          --tls-client-p12-password                        Common password for all client p12 files
           --tls-enable                                     Whether or not to use TLS when connecting to the broker
           --tls-insecure-skip-verify                       It controls whether a client verifies the server's certificate chain and host name
           --tls-same-client-cert-enable                    Use only when mutual TLS is enabled on proxy and broker. It controls whether a proxy validates if proxy client certificate exactly matches brokers client cert (tls-client-cert-file)
@@ -265,6 +267,22 @@ Authentication between Kafka Proxy Client and Kafka Proxy Server with Google-ID 
                        --auth-gateway-client-param  "--credentials-file=/var/run/secret/client/service-account.json" \
                        --auth-gateway-client-param  "--target-audience=tcp://kafka-gateway.grepplabs.com" \
                        --auth-gateway-client-param  "--timeout=10"
+
+### Kafka clients p12 files directory example
+
+Includes all client P12 files in a specified directory with a common password
+                       
+    kafka-proxy server --bootstrap-server-mapping "kafka-0.grepplabs.com:9093,0.0.0.0:32399" \
+       --tls-enable \
+       --ttls-client-p12-directory /data \
+       --tls-client-p12-password changeit \
+       --proxy-listener-tls-enable \
+       --proxy-listener-key-file server.pem \
+       --proxy-listener-cert-file server.crt \
+       --proxy-listener-key-password changeit \
+       --proxy-listener-ca-chain-cert-file ca.crt \
+       --tls-same-client-cert-enable
+
 
 ### Connect to Kafka through SOCKS5 Proxy example
 

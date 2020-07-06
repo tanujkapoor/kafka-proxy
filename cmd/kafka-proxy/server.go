@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+
 	"github.com/grepplabs/kafka-proxy/config"
 	"github.com/grepplabs/kafka-proxy/proxy"
 	"github.com/oklog/oklog/pkg/group"
@@ -20,13 +21,14 @@ import (
 	"time"
 
 	"errors"
+	"strings"
+
 	"github.com/grepplabs/kafka-proxy/pkg/apis"
 	localauth "github.com/grepplabs/kafka-proxy/plugin/local-auth/shared"
 	tokeninfo "github.com/grepplabs/kafka-proxy/plugin/token-info/shared"
 	tokenprovider "github.com/grepplabs/kafka-proxy/plugin/token-provider/shared"
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/go-plugin"
-	"strings"
 
 	"github.com/grepplabs/kafka-proxy/pkg/registry"
 	// built-in plugins
@@ -147,6 +149,8 @@ func initFlags() {
 	Server.Flags().StringVar(&c.Kafka.TLS.ClientCertFile, "tls-client-cert-file", "", "PEM encoded file with client certificate")
 	Server.Flags().StringVar(&c.Kafka.TLS.ClientKeyFile, "tls-client-key-file", "", "PEM encoded file with private key for the client certificate")
 	Server.Flags().StringVar(&c.Kafka.TLS.ClientKeyPassword, "tls-client-key-password", "", "Password to decrypt rsa private key")
+	Server.Flags().StringVar(&c.Kafka.TLS.ClientP12Directory, "tls-client-p12-directory", "", "Directory with client p12 files")
+	Server.Flags().StringVar(&c.Kafka.TLS.ClientP12Password, "tls-client-p12-password", "", "Common password for all client p12 files")
 	Server.Flags().StringVar(&c.Kafka.TLS.CAChainCertFile, "tls-ca-chain-cert-file", "", "PEM encoded CA's certificate file")
 
 	//Same TLS client cert tls-same-client-cert-enable

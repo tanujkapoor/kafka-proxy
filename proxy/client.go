@@ -31,7 +31,7 @@ type Client struct {
 	// Config of Proxy request-response processor (instance p)
 	processorConfig ProcessorConfig
 
-	dialer         Dialer
+	dialerMap      map[string]Dialer
 	tcpConnOptions TCPConnOptions
 
 	stopRun  chan struct{}
@@ -46,7 +46,7 @@ type Client struct {
 }
 
 func NewClient(conns *ConnSet, c *config.Config, netAddressMappingFunc config.NetAddressMappingFunc, localPasswordAuthenticator apis.PasswordAuthenticator, localTokenAuthenticator apis.TokenInfo, saslTokenProvider apis.TokenProvider, gatewayTokenProvider apis.TokenProvider, gatewayTokenInfo apis.TokenInfo) (*Client, error) {
-	tlsConfig, err := newTLSClientConfig(c)
+	tlsConfigsMap, err := newTLSClientConfigsMap(c)
 	if err != nil {
 		return nil, err
 	}
@@ -59,10 +59,15 @@ func NewClient(conns *ConnSet, c *config.Config, netAddressMappingFunc config.Ne
 		}
 	}
 
-	dialer, err := newDialer(c, tlsConfig)
-	if err != nil {
-		return nil, err
+	dialerMap := make(map[string]Dialer)
+	for subject, tlsConfig := range tlsConfigsMap {
+		dialer, err := newDialer(c, tlsConfig)
+		if err != nil {
+			return nil, err
+		}
+		dialerMap[subject] = dialer
 	}
+
 	tcpConnOptions := TCPConnOptions{
 		KeepAlive:       c.Kafka.KeepAlive,
 		WriteBufferSize: c.Kafka.ConnectionWriteBufferSize,
@@ -126,7 +131,7 @@ func NewClient(conns *ConnSet, c *config.Config, netAddressMappingFunc config.Ne
 		return nil, err
 	}
 
-	return &Client{conns: conns, config: c, dialer: dialer, tcpConnOptions: tcpConnOptions, stopRun: make(chan struct{}, 1),
+	return &Client{conns: conns, config: c, dialerMap: dialerMap, tcpConnOptions: tcpConnOptions, stopRun: make(chan struct{}, 1),
 		saslAuthByProxy: saslAuthByProxy,
 		authClient: &AuthClient{
 			enabled:       c.Auth.Gateway.Client.Enable,
@@ -257,6 +262,7 @@ func (c *Client) Close() {
 
 func (c *Client) handleConn(conn Conn) {
 	localConn := conn.LocalConnection
+	certSubject := ""
 	if c.kafkaClientCert != nil {
 		err := handshakeAsTLSAndValidateClientCert(localConn, c.kafkaClientCert, c.config.Kafka.DialTimeout)
 
@@ -265,6 +271,14 @@ func (c *Client) handleConn(conn Conn) {
 			_ = localConn.Close()
 			return
 		}
+	} else {
+		tlsConn, _ := conn.LocalConnection.(*tls.Conn)
+		err := tlsConn.Handshake()
+		if err != nil {
+			logrus.Infof("Error in handshake: %v", err.Error())
+			return
+		}
+		certSubject = tlsConn.ConnectionState().PeerCertificates[0].Subject.String()
 	}
 
 	proxyConnectionsTotal.WithLabelValues(conn.BrokerAddress).Inc()
@@ -275,7 +289,7 @@ func (c *Client) handleConn(conn Conn) {
 		logrus.Infof("Dial address changed from %s to %s", conn.BrokerAddress, dialAddress)
 	}
 
-	server, err := c.DialAndAuth(dialAddress)
+	server, err := c.DialAndAuth(dialAddress, certSubject)
 	if err != nil {
 		logrus.Infof("couldn't connect to %s(%s): %v", dialAddress, conn.BrokerAddress, err)
 		_ = conn.LocalConnection.Close()
@@ -294,8 +308,12 @@ func (c *Client) handleConn(conn Conn) {
 	}
 }
 
-func (c *Client) DialAndAuth(brokerAddress string) (net.Conn, error) {
-	conn, err := c.dialer.Dial("tcp", brokerAddress)
+func (c *Client) DialAndAuth(brokerAddress, certSubject string) (net.Conn, error) {
+	dialer := c.dialerMap[certSubject]
+	if dialer == nil {
+		dialer = c.dialerMap[""]
+	}
+	conn, err := dialer.Dial("tcp", brokerAddress)
 	if err != nil {
 		return nil, err
 	}
